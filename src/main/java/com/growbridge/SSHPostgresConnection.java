@@ -1,41 +1,64 @@
 package com.growbridge;
 
 import com.jcraft.jsch.*;
+
+import java.io.FileInputStream;
+import java.io.IOException;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.Properties;
 
 public class SSHPostgresConnection {
-    private static final String SSH_HOST = "your.ssh.server.com";  // SSH Server
-    private static final int SSH_PORT = 22;                        // SSH Port
-    private static final String SSH_USER = "your_ssh_username";    // SSH Username
-    private static final String SSH_PRIVATE_KEY = "/path/to/private_key.pem";  // Private key for SSH
+    private static String SSH_HOST = "your.ssh.server.com";  // SSH Server
+    private static int SSH_PORT = 22;                        // SSH Port
+    private static String SSH_USER = "your_ssh_username";    // SSH Username
+    private static String SSH_PASSWORD = "/path/to/private_key.pem";  // Private key for SSH
 
-    private static final String DB_HOST = "127.0.0.1";  // Localhost (after SSH tunnel)
-    private static final int DB_PORT = 5433;            // Forwarded port (e.g., 5433)
-    private static final String DB_NAME = "your_database";
-    private static final String DB_USER = "your_db_user";
-    private static final String DB_PASSWORD = "your_db_password";
+    private static String DB_HOST = "127.0.0.1";  // Localhost (after SSH tunnel)
+    private static int DB_PORT = 5433;            // Forwarded port (e.g., 5433)
+    private static String DB_NAME = "your_database";
+    private static String DB_USER = "your_db_user";
+    private static String DB_PASSWORD = "your_db_password";
 
     private static Session sshSession;
     private static Connection connection;
 
-    public static void main(String[] args) {
+    public static Connection initiateConnection() {
         try {
+            loadDatabaseConfig();
             establishSSHTunnel();
             connectToDatabase();
         } catch (Exception e) {
             e.printStackTrace();
-        } finally {
-            closeConnections();
         }
+        return connection;
     }
 
+    private static void loadDatabaseConfig() {
+        Properties properties = new Properties();
+        try (FileInputStream fis = new FileInputStream("config/db.config")) {
+            properties.load(fis);
+            SSH_HOST = properties.getProperty("SSH_HOST");
+            SSH_PORT = Integer.parseInt(properties.getProperty("SSH_PORT"));
+            SSH_USER = properties.getProperty("SSH_USER");
+            SSH_PASSWORD = properties.getProperty("SSH_PASSWORD");
+
+            DB_HOST = properties.getProperty("DB_HOST");
+            DB_PORT = Integer.parseInt(properties.getProperty("DB_PORT"));
+            DB_NAME = properties.getProperty("DB_NAME");
+            DB_USER = properties.getProperty("DB_USER");
+            DB_PASSWORD = properties.getProperty("DB_PASSWORD");
+        } catch (IOException e) {
+            System.err.println("Error loading database configuration: " + e.getMessage());
+            System.exit(1); // Exit if config file is missing
+        }
+    }
     private static void establishSSHTunnel() throws JSchException {
         JSch jsch = new JSch();
-        jsch.addIdentity(SSH_PRIVATE_KEY);  // Use private key authentication
 
         sshSession = jsch.getSession(SSH_USER, SSH_HOST, SSH_PORT);
+        sshSession.setPassword(SSH_PASSWORD);
         sshSession.setConfig("StrictHostKeyChecking", "no");  // Disable host key checking
         sshSession.connect();
 
@@ -50,7 +73,7 @@ public class SSHPostgresConnection {
         System.out.println("Connected to PostgreSQL database successfully!");
     }
 
-    private static void closeConnections() {
+    public static void closeConnections() {
         try {
             if (connection != null && !connection.isClosed()) {
                 connection.close();

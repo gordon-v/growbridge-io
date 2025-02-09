@@ -1,38 +1,40 @@
 package com.growbridge;
 
-import java.io.FileInputStream;
-import java.io.IOException;
 import java.sql.*;
-import java.util.Properties;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Date;
 import java.util.Scanner;
 
 public class MarketingApp {
     private static final Scanner scanner = new Scanner(System.in);
-    private static String DB_URL, DB_USER, DB_PASSWORD;
     private static Connection connection;
+    private static int loggedInUserId = -1; // -1 indicates no user is logged in
 
     public static void main(String[] args) {
-        loadDatabaseConfig();
 
-        // Open database connection at application start
-        try {
-            connection = DriverManager.getConnection(DB_URL, DB_USER, DB_PASSWORD);
-            System.out.println("Connected to the database successfully.");
-        } catch (SQLException e) {
-            System.err.println("Failed to connect to database: " + e.getMessage());
-            return;
-        }
+        connection =  SSHPostgresConnection.initiateConnection();
 
         while (true) {
-            System.out.println("\n=== Marketing App ===");
-            System.out.println("1. Register User");
-            System.out.println("2. Login User");
-            System.out.println("3. Link Social Media Account");
-            System.out.println("4. Create Profile Marketing Request");
-            System.out.println("5. Create Post Marketing Request");
-            System.out.println("6. View and Track Marketing Requests");
-            System.out.println("7. Exit");
-            System.out.print("Choose an option: ");
+            // Show different options based on whether the user is logged in
+            if (loggedInUserId == -1) {
+                // If not logged in, show only Register and Login options
+                System.out.println("\n=== Marketing App ===");
+                System.out.println("1. Register User");
+                System.out.println("2. Login User");
+                System.out.println("8. Exit");
+                System.out.print("Choose an option: ");
+            } else {
+                // If logged in, show full set of options
+                System.out.println("\n=== Marketing App ===");
+                System.out.println("3. Link Social Media Account");
+                System.out.println("4. Create Profile Marketing Request");
+                System.out.println("5. Create Post Marketing Request");
+                System.out.println("6. View and Track Marketing Requests");
+                System.out.println("7. Logout");
+                System.out.println("8. Exit");
+                System.out.print("Choose an option: ");
+            }
 
             int choice = scanner.nextInt();
             scanner.nextLine(); // Consume newline
@@ -44,7 +46,8 @@ public class MarketingApp {
                 case 4 -> createProfileMarketingRequest();
                 case 5 -> createPostMarketingRequest();
                 case 6 -> viewMarketingRequests();
-                case 7 -> {
+                case 7 -> logoutUser();
+                case 8 -> {
                     closeConnection();
                     System.out.println("Exiting...");
                     return;
@@ -54,28 +57,12 @@ public class MarketingApp {
         }
     }
 
-    private static void loadDatabaseConfig() {
-        Properties properties = new Properties();
-        try (FileInputStream fis = new FileInputStream("config/db.config")) {
-            properties.load(fis);
-            DB_URL = properties.getProperty("DB_URL");
-            DB_USER = properties.getProperty("DB_USER");
-            DB_PASSWORD = properties.getProperty("DB_PASSWORD");
-        } catch (IOException e) {
-            System.err.println("Error loading database configuration: " + e.getMessage());
-            System.exit(1); // Exit if config file is missing
-        }
+    private static void logoutUser() {
+        loggedInUserId = -1;
     }
 
     private static void closeConnection() {
-        try {
-            if (connection != null && !connection.isClosed()) {
-                connection.close();
-                System.out.println("Database connection closed.");
-            }
-        } catch (SQLException e) {
-            System.err.println("Error closing database connection: " + e.getMessage());
-        }
+        SSHPostgresConnection.closeConnections();
     }
 
     private static void registerUser() {
@@ -108,14 +95,15 @@ public class MarketingApp {
         System.out.print("Enter password: ");
         String password = scanner.nextLine();
 
-        String sql = "SELECT id FROM app_user WHERE username = ? AND password = ?";
+        String sql = "SELECT userid FROM app_user WHERE username = ? AND password = ?";
 
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setString(1, username);
             pstmt.setString(2, password);
             ResultSet rs = pstmt.executeQuery();
             if (rs.next()) {
-                System.out.println("Login successful. User ID: " + rs.getInt("id"));
+                loggedInUserId = rs.getInt("userid");
+                System.out.println("Login successful. User ID: " + loggedInUserId);
             } else {
                 System.out.println("Invalid username or password.");
             }
@@ -125,9 +113,11 @@ public class MarketingApp {
     }
 
     private static void linkSocialMedia() {
-        System.out.print("Enter user ID: ");
-        int userId = scanner.nextInt();
-        scanner.nextLine();
+        if (loggedInUserId == -1) {
+            System.out.println("You must be logged in to link social media accounts.");
+            return;
+        }
+
         System.out.print("Enter platform (e.g., Twitter, Facebook): ");
         String platform = scanner.nextLine();
         System.out.print("Enter username on platform: ");
@@ -144,7 +134,7 @@ public class MarketingApp {
             pstmt.setString(2, userName);
             pstmt.setString(3, accountType);
             pstmt.setInt(4, followers);
-            pstmt.setInt(5, userId);
+            pstmt.setInt(5, loggedInUserId);
             pstmt.executeUpdate();
             System.out.println("Social media account linked successfully.");
         } catch (SQLException e) {
@@ -152,73 +142,159 @@ public class MarketingApp {
         }
     }
 
+
     private static void createProfileMarketingRequest() {
-        System.out.print("Enter user ID: ");
-        int userId = scanner.nextInt();
-        System.out.print("Enter provider ID: ");
-        int providerId = scanner.nextInt();
-        System.out.print("Enter target followers: ");
-        int targetFollowers = scanner.nextInt();
-        scanner.nextLine();
+        if (loggedInUserId == -1) {
+            System.out.println("You must be logged in to create a profile marketing request.");
+            return;
+        }
+
+        int providerId = 1;  // Profile marketing request always has provider ID 1
+        // Query to get the list of linked social media profiles for the logged-in user
+        String sql = "SELECT profileid, platform, user_name FROM SocialMediaProfile WHERE userid = ?";
+
+        try (PreparedStatement pstmt = connection.prepareStatement(sql, ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY)) {
+            pstmt.setInt(1, loggedInUserId);
+            ResultSet rs = pstmt.executeQuery();
+
+            // Check if the user has linked any social media profiles
+            if (!rs.next()) {
+                System.out.println("You don't have any linked social media profiles.");
+                return;
+            }
+
+            // Move the cursor back to the beginning of the ResultSet
+            rs.beforeFirst();
+
+            // Display the list of linked profiles
+            System.out.println("Select a social media profile to associate with the marketing request:");
+            int counter = 1;
+            while (rs.next()) {
+                int profileId = rs.getInt("profileid");
+                String platform = rs.getString("platform");
+                String userName = rs.getString("user_name");
+                System.out.println(counter + ". " + platform + ": " + userName + " (Profile ID: " + profileId + ")");
+                counter++;
+            }
+
+            // Ask the user to select a profile
+            System.out.print("Enter the number of the profile you want to select: ");
+            int selectedOption = scanner.nextInt();
+            scanner.nextLine(); // Consume the newline
+
+            // Validate the selected option
+            if (selectedOption < 1 || selectedOption >= counter) {
+                System.out.println("Invalid selection.");
+                return;
+            }
+
+            // Move back to the beginning of the ResultSet to retrieve the chosen profile ID
+            rs.beforeFirst();
+            int selectedProfileId = -1;
+            for (int i = 1; i <= selectedOption; i++) {
+                if (rs.next()) {
+                    if (i == selectedOption) {
+                        selectedProfileId = rs.getInt("profileid");
+                    }
+                }
+            }
+
+            // Now that we have the profile ID, proceed with the marketing request creation
+            System.out.print("Enter target followers: ");
+            int targetFollowers = scanner.nextInt();
+            scanner.nextLine(); // Consume the newline
+            LocalDateTime ldt = LocalDateTime.now().plusWeeks(1);
+            java.sql.Date timeline = java.sql.Date.valueOf(ldt.toLocalDate());
+
+            // Insert the profile marketing request into the database
+            String insertSql = "INSERT INTO ProfileMarketingRequest (target_followers, timeline, profileid, date_created, status, userid, providerid) " +
+                    "VALUES (?, ?, ?, NOW(), 'pending', ?, ?)";
+
+            try (PreparedStatement insertPstmt = connection.prepareStatement(insertSql)) {
+                insertPstmt.setInt(1, targetFollowers);
+                insertPstmt.setDate(2, timeline);
+                insertPstmt.setInt(3, selectedProfileId); // Use the selected profile ID
+                insertPstmt.setInt(4, loggedInUserId);
+                insertPstmt.setInt(5, providerId);
+                insertPstmt.executeUpdate();
+                System.out.println("Profile marketing request created successfully.");
+            } catch (SQLException e) {
+                System.err.println("Error: " + e.getMessage());
+            }
+
+        } catch (SQLException e) {
+            System.err.println("Error fetching social media profiles: " + e.getMessage());
+        }
+    }
+
+
+
+
+    private static void createPostMarketingRequest() {
+        if (loggedInUserId == -1) {
+            System.out.println("You must be logged in to create a post marketing request.");
+            return;
+        }
+
+        // Automatically set provider ID for post marketing request
+        int providerId = 0;  // Post marketing request always has provider ID 0
+
+        System.out.print("Enter target likes: ");
+        int targetLikes = scanner.nextInt();
+        System.out.print("Enter target comments: ");
+        int targetComments = scanner.nextInt();
+        scanner.nextLine();  // Consume newline
         System.out.print("Enter timeline (YYYY-MM-DD HH:MM:SS): ");
         String timeline = scanner.nextLine();
-        System.out.print("Enter profile ID: ");
-        int profileId = scanner.nextInt();
+        System.out.print("Enter post ID: ");
+        int postId = scanner.nextInt();
 
-        String sql = "INSERT INTO ProfileMarketingRequest (target_followers, timeline, profileid, date_created, status, userid, providerid) VALUES (?, ?, ?, NOW(), 'pending', ?, ?)";
+        String sql = "INSERT INTO PostMarketingRequest (target_likes, target_comments, timeline, postid, date_created, status, userid, providerid) " +
+                "VALUES (?, ?, ?, ?, NOW(), 'pending', ?, ?)";
 
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-            pstmt.setInt(1, targetFollowers);
-            pstmt.setString(2, timeline);
-            pstmt.setInt(3, profileId);
-            pstmt.setInt(4, userId);
-            pstmt.setInt(5, providerId);
+            pstmt.setInt(1, targetLikes);
+            pstmt.setInt(2, targetComments);
+            pstmt.setString(3, timeline);
+            pstmt.setInt(4, postId);
+            pstmt.setInt(5, loggedInUserId);
+            pstmt.setInt(6, providerId); // Use providerId as 0
             pstmt.executeUpdate();
-            System.out.println("Profile marketing request created successfully.");
+            System.out.println("Post marketing request created successfully.");
         } catch (SQLException e) {
             System.err.println("Error: " + e.getMessage());
         }
     }
 
-    private static void createPostMarketingRequest() { //TODO: Implement
-        System.out.print("Enter user ID: ");
-        int userId = scanner.nextInt();
-        System.out.print("Enter provider ID: ");
-        int providerId = scanner.nextInt();
-        System.out.print("Enter target followers: ");
-        int targetFollowers = scanner.nextInt();
-        scanner.nextLine();
-        System.out.print("Enter timeline (YYYY-MM-DD HH:MM:SS): ");
-        String timeline = scanner.nextLine();
-        System.out.print("Enter profile ID: ");
-        int profileId = scanner.nextInt();
 
-        String sql = "INSERT INTO ProfileMarketingRequest (target_followers, timeline, profileid, date_created, status, userid, providerid) VALUES (?, ?, ?, NOW(), 'pending', ?, ?)";
-
-        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-            pstmt.setInt(1, targetFollowers);
-            pstmt.setString(2, timeline);
-            pstmt.setInt(3, profileId);
-            pstmt.setInt(4, userId);
-            pstmt.setInt(5, providerId);
-            pstmt.executeUpdate();
-            System.out.println("Profile marketing request created successfully.");
-        } catch (SQLException e) {
-            System.err.println("Error: " + e.getMessage());
-        }
-    }
 
     private static void viewMarketingRequests() {
-        System.out.print("Enter user ID: ");
-        int userId = scanner.nextInt();
+        if (loggedInUserId == -1) {
+            System.out.println("You must be logged in to view marketing requests.");
+            return;
+        }
 
         try (Statement stmt = connection.createStatement()) {
-            ResultSet rs = stmt.executeQuery("SELECT * FROM ProfileMarketingRequest WHERE userid = " + userId);
+            // Viewing Profile Marketing Requests
+            ResultSet rs = stmt.executeQuery("SELECT * FROM ProfileMarketingRequest WHERE userid = " + loggedInUserId);
+            System.out.println("Profile Marketing Requests:");
             while (rs.next()) {
-                System.out.println("Profile Request ID: " + rs.getInt("id"));
+                System.out.println("ID: " + rs.getInt("requestid") + ", Target Followers: " + rs.getInt("target_followers") +
+                        ", Timeline: " + rs.getString("timeline") + ", Status: " + rs.getString("status"));
             }
+
+            // Viewing Post Marketing Requests
+            rs = stmt.executeQuery("SELECT * FROM PostMarketingRequest WHERE userid = " + loggedInUserId);
+            System.out.println("Post Marketing Requests:");
+            while (rs.next()) {
+                System.out.println("ID: " + rs.getInt("requestid") + ", Target Likes: " + rs.getInt("target_likes") +
+                        ", Target Comments: " + rs.getInt("target_comments") + ", Timeline: " + rs.getString("timeline") +
+                        ", Status: " + rs.getString("status"));
+            }
+
         } catch (SQLException e) {
             System.err.println("Error: " + e.getMessage());
         }
     }
+
 }
