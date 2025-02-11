@@ -346,7 +346,7 @@ public class MarketingApp {
         String profileRequestSql = "SELECT pmr.requestid, pmr.target_followers, pmr.status, pmr.profileid, " +
                 "smp.followers_count, smp.platform, smp.user_name " +
                 "FROM ProfileMarketingRequest pmr " +
-                "JOIN SocialMediaProfile smp ON pmr.profileid = smp.requestid " +
+                "JOIN SocialMediaProfile smp ON pmr.profileid = smp.profileid " +
                 "WHERE pmr.userid = ?";
 
         try (PreparedStatement pstmt = connection.prepareStatement(profileRequestSql)) {
