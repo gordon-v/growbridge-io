@@ -2,8 +2,6 @@ package com.growbridge;
 
 import java.sql.*;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.util.Date;
 import java.util.Random;
 import java.util.Scanner;
 
@@ -20,14 +18,14 @@ public class MarketingApp {
             // Show different options based on whether the user is logged in
             if (loggedInUserId == -1) {
                 // If not logged in, show only Register and Login options
-                System.out.println("\n=== Marketing App ===");
+                System.out.println("\n=== growbridge-io ===");
                 System.out.println("1. Register User");
                 System.out.println("2. Login User");
                 System.out.println("8. Exit");
                 System.out.print("Choose an option: ");
             } else {
                 // If logged in, show full set of options
-                System.out.println("\n=== Marketing App ===");
+                System.out.println("\n=== growbridge-io ===");
                 System.out.println("3. Link Social Media Account");
                 System.out.println("4. Create Profile Marketing Request");
                 System.out.println("5. Create Post Marketing Request");
