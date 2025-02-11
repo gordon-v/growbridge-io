@@ -2,8 +2,7 @@ package com.growbridge;
 
 import java.sql.*;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.util.Date;
+import java.util.Random;
 import java.util.Scanner;
 
 public class MarketingApp {
@@ -13,20 +12,20 @@ public class MarketingApp {
 
     public static void main(String[] args) {
 
-        connection =  SSHPostgresConnection.initiateConnection();
+        connection = SSHPostgresConnection.initiateConnection();
 
         while (true) {
             // Show different options based on whether the user is logged in
             if (loggedInUserId == -1) {
                 // If not logged in, show only Register and Login options
-                System.out.println("\n=== Marketing App ===");
+                System.out.println("\n=== growbridge-io ===");
                 System.out.println("1. Register User");
                 System.out.println("2. Login User");
                 System.out.println("8. Exit");
                 System.out.print("Choose an option: ");
             } else {
                 // If logged in, show full set of options
-                System.out.println("\n=== Marketing App ===");
+                System.out.println("\n=== growbridge-io ===");
                 System.out.println("3. Link Social Media Account");
                 System.out.println("4. Create Profile Marketing Request");
                 System.out.println("5. Create Post Marketing Request");
@@ -228,44 +227,111 @@ public class MarketingApp {
     }
 
 
-
-
     private static void createPostMarketingRequest() {
         if (loggedInUserId == -1) {
-            System.out.println("You must be logged in to create a post marketing request.");
+            System.out.println("You must be logged in to create a profile marketing request.");
             return;
         }
 
-        // Automatically set provider ID for post marketing request
-        int providerId = 0;  // Post marketing request always has provider ID 0
+        int providerId = 2;  // Post marketing request always has provider ID 2
+        // Query to get the list of linked social media profiles for the logged-in user
+        String sql = "SELECT profileid, platform, user_name FROM SocialMediaProfile WHERE userid = ?";
 
-        System.out.print("Enter target likes: ");
-        int targetLikes = scanner.nextInt();
-        System.out.print("Enter target comments: ");
-        int targetComments = scanner.nextInt();
-        scanner.nextLine();  // Consume newline
-        System.out.print("Enter timeline (YYYY-MM-DD HH:MM:SS): ");
-        String timeline = scanner.nextLine();
-        System.out.print("Enter post ID: ");
-        int postId = scanner.nextInt();
+        try (PreparedStatement pstmt = connection.prepareStatement(sql, ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_READ_ONLY)) {
+            pstmt.setInt(1, loggedInUserId);
+            ResultSet rs = pstmt.executeQuery();
 
-        String sql = "INSERT INTO PostMarketingRequest (target_likes, target_comments, timeline, postid, date_created, status, userid, providerid) " +
-                "VALUES (?, ?, ?, ?, NOW(), 'pending', ?, ?)";
+            // Check if the user has linked any social media profiles
+            if (!rs.next()) {
+                System.out.println("You don't have any linked social media profiles.");
+                return;
+            }
 
-        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
-            pstmt.setInt(1, targetLikes);
-            pstmt.setInt(2, targetComments);
-            pstmt.setString(3, timeline);
-            pstmt.setInt(4, postId);
-            pstmt.setInt(5, loggedInUserId);
-            pstmt.setInt(6, providerId); // Use providerId as 0
-            pstmt.executeUpdate();
-            System.out.println("Post marketing request created successfully.");
+            // Move the cursor back to the beginning of the ResultSet
+            rs.beforeFirst();
+
+            // Display the list of linked profiles
+            System.out.println("Select a social media profile to associate with the marketing request:");
+            int counter = 1;
+            while (rs.next()) {
+                int profileId = rs.getInt("profileid");
+                String platform = rs.getString("platform");
+                String userName = rs.getString("user_name");
+                System.out.println(counter + ". " + platform + ": " + userName + " (Profile ID: " + profileId + ")");
+                counter++;
+            }
+
+            // Ask the user to select a profile
+            System.out.print("Enter the number of the profile you want to select: ");
+            int selectedOption = scanner.nextInt();
+            scanner.nextLine(); // Consume the newline
+
+            // Validate the selected option
+            if (selectedOption < 1 || selectedOption >= counter) {
+                System.out.println("Invalid selection.");
+                return;
+            }
+
+            // Move back to the beginning of the ResultSet to retrieve the chosen profile ID
+            rs.beforeFirst();
+            int selectedProfileId = -1;
+            for (int i = 1; i <= selectedOption; i++) {
+                if (rs.next()) {
+                    if (i == selectedOption) {
+                        selectedProfileId = rs.getInt("profileid");
+                    }
+                }
+            }
+            // Ask for post URL
+            System.out.print("Enter post URL: ");
+            String postUrl = scanner.nextLine();
+            // Generate random likes and comments for the new post
+            Random random = new Random();
+            int randomLikes = random.nextInt(10000) + 1;  // Random value between 1 and 10000
+            int randomComments = random.nextInt(10000) + 1;
+
+            // Insert a new post
+            String insertPostSql = "INSERT INTO Post (url, profileid, likes_count, comments_count, post_date) VALUES (?, ?, ?, ?, NOW()) RETURNING postid";
+
+            int postId = -1;
+            try (PreparedStatement postStmt = connection.prepareStatement(insertPostSql)) {
+                postStmt.setString(1, postUrl);
+                postStmt.setInt(2, selectedProfileId);
+                postStmt.setInt(3, randomLikes);
+                postStmt.setInt(4, randomComments);
+                ResultSet postRs = postStmt.executeQuery();
+                if (postRs.next()) {
+                    postId = postRs.getInt(1);
+                } else {
+                    System.out.println("Failed to create post.");
+                    return;
+                }
+            }
+
+            System.out.print("Enter target likes: ");
+            int targetLikes = scanner.nextInt();
+            System.out.print("Enter target comments: ");
+            int targetComments = scanner.nextInt();
+            scanner.nextLine(); // Consume newline
+            LocalDateTime ldt = LocalDateTime.now().plusWeeks(1);
+            java.sql.Date timeline = java.sql.Date.valueOf(ldt.toLocalDate());
+
+            // Insert the Post Marketing Request
+            String insertRequestSql = "INSERT INTO PostMarketingRequest (target_likes, target_comments, timeline, postid, date_created, status, userid, providerid) VALUES (?, ?, ?, ?, NOW(), 'pending', ?, 2)";
+
+            try (PreparedStatement requestStmt = connection.prepareStatement(insertRequestSql)) {
+                requestStmt.setInt(1, targetLikes);
+                requestStmt.setInt(2, targetComments);
+                requestStmt.setDate(3, timeline);
+                requestStmt.setInt(4, postId);
+                requestStmt.setInt(5, loggedInUserId);
+                requestStmt.executeUpdate();
+                System.out.println("Post marketing request created successfully.");
+            }
         } catch (SQLException e) {
             System.err.println("Error: " + e.getMessage());
         }
     }
-
 
 
     private static void viewMarketingRequests() {
@@ -274,26 +340,97 @@ public class MarketingApp {
             return;
         }
 
-        try (Statement stmt = connection.createStatement()) {
-            // Viewing Profile Marketing Requests
-            ResultSet rs = stmt.executeQuery("SELECT * FROM ProfileMarketingRequest WHERE userid = " + loggedInUserId);
-            System.out.println("Profile Marketing Requests:");
+        System.out.println("\n=== Profile Marketing Requests ===");
+
+        // SQL to get profile marketing requests with profile details
+        String profileRequestSql = "SELECT pmr.requestid, pmr.target_followers, pmr.status, pmr.profileid, " +
+                "smp.followers_count, smp.platform, smp.user_name " +
+                "FROM ProfileMarketingRequest pmr " +
+                "JOIN SocialMediaProfile smp ON pmr.profileid = smp.requestid " +
+                "WHERE pmr.userid = ?";
+
+        try (PreparedStatement pstmt = connection.prepareStatement(profileRequestSql)) {
+            pstmt.setInt(1, loggedInUserId);
+            ResultSet rs = pstmt.executeQuery();
+
+            boolean hasRequests = false;
+
             while (rs.next()) {
-                System.out.println("ID: " + rs.getInt("requestid") + ", Target Followers: " + rs.getInt("target_followers") +
-                        ", Timeline: " + rs.getString("timeline") + ", Status: " + rs.getString("status"));
+                hasRequests = true;
+                int requestId = rs.getInt("requestid");
+                int targetFollowers = rs.getInt("target_followers");
+                int currentFollowers = rs.getInt("followers_count");
+                String status = rs.getString("status");
+                String platform = rs.getString("platform");
+                String profileUserName = rs.getString("user_name");
+
+                // Calculate percentage completion
+                int percentageCompleted = (int) ((double) currentFollowers / targetFollowers * 100);
+
+                System.out.println("Request ID: " + requestId);
+                System.out.println("Target Profile: " + platform + " - " + profileUserName);
+                System.out.println("Target Followers: " + targetFollowers);
+                System.out.println("Current Followers: " + currentFollowers);
+                System.out.println("Status: " + status);
+                System.out.println("Completion: " + percentageCompleted + "%");
+                System.out.println("----------------------------");
             }
 
-            // Viewing Post Marketing Requests
-            rs = stmt.executeQuery("SELECT * FROM PostMarketingRequest WHERE userid = " + loggedInUserId);
-            System.out.println("Post Marketing Requests:");
-            while (rs.next()) {
-                System.out.println("ID: " + rs.getInt("requestid") + ", Target Likes: " + rs.getInt("target_likes") +
-                        ", Target Comments: " + rs.getInt("target_comments") + ", Timeline: " + rs.getString("timeline") +
-                        ", Status: " + rs.getString("status"));
+            if (!hasRequests) {
+                System.out.println("No profile marketing requests found.");
             }
-
         } catch (SQLException e) {
-            System.err.println("Error: " + e.getMessage());
+            System.err.println("Error fetching profile marketing requests: " + e.getMessage());
+        }
+
+        System.out.println("\n=== Post Marketing Requests ===");
+
+        // SQL to get post marketing requests with post details
+        String postRequestSql = "SELECT pmr.requestid, pmr.target_likes, pmr.target_comments, pmr.status, " +
+                "p.likes_count, p.comments_count, p.url " +
+                "FROM PostMarketingRequest pmr " +
+                "JOIN Post p ON pmr.postid = p.postid " +
+                "WHERE pmr.userid = ?";
+
+        try (PreparedStatement pstmt = connection.prepareStatement(postRequestSql)) {
+            pstmt.setInt(1, loggedInUserId);
+            ResultSet rs = pstmt.executeQuery();
+
+            boolean hasRequests = false;
+
+            while (rs.next()) {
+                hasRequests = true;
+                int requestId = rs.getInt("requestid");
+                int targetLikes = rs.getInt("target_likes");
+                int targetComments = rs.getInt("target_comments");
+                int currentLikes = rs.getInt("likes_count");
+                int currentComments = rs.getInt("comments_count");
+                String status = rs.getString("status");
+                String postUrl = rs.getString("url");
+
+                // Calculate percentage completion
+                int likesCompletion = (int) ((double) currentLikes / targetLikes * 100);
+                int commentsCompletion = (int) ((double) currentComments / targetComments * 100);
+
+                // Overall progress (average of both metrics)
+                int overallCompletion = (likesCompletion + commentsCompletion) / 2;
+
+                System.out.println("Request ID: " + requestId);
+                System.out.println("Target Post: " + postUrl);
+                System.out.println("Target Likes: " + targetLikes + " | Current Likes: " + currentLikes);
+                System.out.println("Target Comments: " + targetComments + " | Current Comments: " + currentComments);
+                System.out.println("Status: " + status);
+                System.out.println("Likes Completion: " + likesCompletion + "%");
+                System.out.println("Comments Completion: " + commentsCompletion + "%");
+                System.out.println("Overall Completion: " + overallCompletion + "%");
+                System.out.println("----------------------------");
+            }
+
+            if (!hasRequests) {
+                System.out.println("No post marketing requests found.");
+            }
+        } catch (SQLException e) {
+            System.err.println("Error fetching post marketing requests: " + e.getMessage());
         }
     }
 
